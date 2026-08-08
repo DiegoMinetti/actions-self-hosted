@@ -1,0 +1,55 @@
+# Wrapper de la imagen oficial de actions/runner.
+#
+# Por qué existe este Dockerfile (Sprint 2+):
+# La imagen oficial `ghcr.io/actions/actions-runner:*` dejó de traer
+# ENTRYPOINT configurado en versiones recientes (Q1 2025+). Solo trae
+# `CMD ["/bin/bash"]`, lo cual hace que el container arranque en bash
+# y el listener del runner nunca se ejecute.
+#
+# Este wrapper:
+# 1) Toma la imagen oficial como base (mantenemos la versión oficial
+#    del binario `Runner.Listener`).
+# 2) Le agrega un ENTRYPOINT explícito que invoca `/home/runner/run.sh`,
+#    que es el entrypoint "vivo" que la imagen sí trae pero Docker
+#    no invoca por sí solo.
+#
+# Build:
+#   docker build -f docker/runner/Dockerfile.runner \
+#     -t actions-runner:2.336.0 docker/runner
+#
+# Para actualizar a una nueva versión, cambiar RUNNER_VERSION abajo
+# y rebuildear. La app usa el tag de la imagen local (no :latest)
+# para ser reproducible.
+#
+# Ver también: docker/runner/entrypoint.sh y apps/api/src/services/runner-service.ts
+# (constante DEFAULT_IMAGE).
+
+ARG RUNNER_VERSION=2.336.0
+FROM ghcr.io/actions/actions-runner:${RUNNER_VERSION}
+
+# El entrypoint oficial vive en /home/runner/run.sh. Algunos plugins
+# (cache, toolcache) se inicializan en el primer arranque del listener;
+# prefijamos con `exec` para que el PID 1 del container sea el proceso
+# del runner (importante para que señales como SIGTERM lleguen al listener
+# y no a un wrapper de bash).
+#
+# Path: lo copiamos a /usr/local/bin/ (no a /home/runner/) porque la app
+# monta el volumen del runner en /home/runner y eso pisa el directorio
+# completo. Si el entrypoint estuviera adentro, Docker tiraría
+# "No such file or directory" al arrancar.
+#
+# `--chmod=755` (BuildKit) setea los permisos en el COPY porque la imagen
+# base corre como user `runner` (1001) y no puede chmod archivos en
+# /home/runner/owned-by-root en un RUN posterior.
+COPY --chmod=755 entrypoint.sh /usr/local/bin/runner-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/runner-entrypoint.sh"]
+CMD ["run"]
+
+# Defaults razonables. RUNNER_ALLOW_RUNASROOT=1 porque la imagen oficial
+# corre como root adentro; el entrypoint `run.sh` valida esto y rechaza
+# sin esa var. La app también la pasa como env en runtime (containers.ts),
+# así que este ENV es solo un fallback.
+ENV RUNNER_ALLOW_RUNASROOT=1 \
+    ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1 \
+    DEBIAN_FRONTEND=noninteractive

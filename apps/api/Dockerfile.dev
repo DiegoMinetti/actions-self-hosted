@@ -1,0 +1,22 @@
+FROM node:20-alpine
+
+# pnpm via corepack (la versión se fija en package.json > packageManager).
+RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
+
+WORKDIR /app
+
+# Cache de deps: copiar solo manifests primero.
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY apps/api/package.json ./apps/api/
+COPY packages/shared/package.json ./packages/shared/
+RUN pnpm install --frozen-lockfile
+
+# Código (montado como volumen en dev, esto es fallback para el primer build).
+COPY packages/shared ./packages/shared
+COPY apps/api ./apps/api
+
+WORKDIR /app/apps/api
+
+EXPOSE 3000
+
+CMD ["pnpm", "dev"]

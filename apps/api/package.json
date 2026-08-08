@@ -1,0 +1,29 @@
+{
+  "name": "@actions-self-hosted/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo 'lint: api (no linter configured)'"
+  },
+  "dependencies": {
+    "@actions-self-hosted/shared": "workspace:*",
+    "cors": "^2.8.5",
+    "dockerode": "^4.0.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/dockerode": "^3.3.31",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "actions-self-hosted",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Panel local para gestionar N runners self-hosted de GitHub Actions",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter \"./apps/*\" run dev",
+    "build": "pnpm -r --filter \"./packages/*\" run build && pnpm -r --filter \"./apps/*\" run build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\" --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\" --ignore-path .gitignore",
+    "clean": "pnpm -r exec rm -rf dist node_modules .turbo"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}

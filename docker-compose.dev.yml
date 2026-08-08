@@ -1,0 +1,54 @@
+# Opcional: levantar API + Web dentro de Docker para dev.
+# Útil cuando querés probar en otra máquina o mantener el host limpio.
+# Para uso normal en Mac/Linux/Windows alcanza con `pnpm dev` o `start.sh`/`start.ps1`.
+#
+# Limitaciones:
+# - En Mac/Windows el socket de Docker está en /var/run/docker.sock del host.
+#   La API lo va a usar vía DOCKER_SOCKET (Sprint 1+).
+# - Los hot-reloads funcionan via volúmenes de código fuente.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
+    container_name: actions-self-hosted-api-dev
+    environment:
+      NODE_ENV: development
+      API_PORT: 3000
+      CORS_ORIGIN: http://localhost:5173
+      DB_PATH: /app/data/runners.db
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./apps/api/src:/app/apps/api/src:ro
+      - ./packages/shared/src:/app/packages/shared/src:ro
+      - api-data:/app/data
+      # Socket Docker del host (Mac/Linux). En Windows, ver nota.
+      - /var/run/docker.sock:/var/run/docker.sock
+    init: true
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile.dev
+    container_name: actions-self-hosted-web-dev
+    environment:
+      WEB_PORT: 5173
+      VITE_API_TARGET: http://api:3000
+    ports:
+      - '5173:5173'
+    volumes:
+      - ./apps/web/src:/app/apps/web/src:ro
+      - ./apps/web/index.html:/app/apps/web/index.html:ro
+      - ./apps/web/vite.config.ts:/app/apps/web/vite.config.ts:ro
+      - ./apps/web/tailwind.config.js:/app/apps/web/tailwind.config.js:ro
+      - ./apps/web/postcss.config.js:/app/apps/web/postcss.config.js:ro
+    depends_on:
+      - api
+    init: true
+    restart: unless-stopped
+
+volumes:
+  api-data:

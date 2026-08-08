@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+.git
+.gitignore
+.env
+.env.*
+data
+*.log
+.DS_Store
+**/tsconfig.tsbuildinfo
+**/*.tsbuildinfo
+README.md
+.worktrees

@@ -1,0 +1,46 @@
+# Producción: un solo container con API + frontend bundle.
+# Levanta con: docker compose up --build -d
+# Abrí:       http://localhost:3000
+#
+# Persistencia: la DB SQLite vive en el volume `actions-self-hosted-data`.
+# Socket Docker del host: bindeado para que el container pueda crear/manipular
+#   containers de runners.
+#
+# El `name:` de arriba fuerza el project name en Docker Desktop.
+# Sin esto, docker compose lo calcula del directorio padre y lo normaliza
+# a "actionsselfhosted" (sin guión). Con `name: actions-self-hosted` matchea
+# el COMPOSE_PROJECT_NAME que usa la API para etiquetar los runners.
+
+name: actions-self-hosted
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: actions-self-hosted:local
+    container_name: actions-self-hosted
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      API_PORT: '3000'
+      CORS_ORIGIN: http://localhost:3000
+      DB_PATH: /app/data/runners.db
+    ports:
+      - '3000:3000'
+    volumes:
+      - app-data:/app/data
+      # Socket Docker del host. En Mac/Linux queda así; en Windows hay que
+      # cambiar a la ruta del named pipe (ver README).
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3000/api/health']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  app-data:
+    name: actions-self-hosted-data

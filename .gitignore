@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Runtime data
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Vite
+apps/web/.vite/
+apps/web/dist/
+
+# API
+apps/api/dist/
