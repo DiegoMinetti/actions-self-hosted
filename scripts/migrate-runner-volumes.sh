@@ -38,7 +38,17 @@
 # =============================================================================
 set -euo pipefail
 
-APP_URL="${APP_URL:-http://127.0.0.1:3000}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
+
+# El puerto del panel sale del .env (PANEL_PORT), no está fijo: si el panel
+# está en otro puerto, la API no responde en 3000 y la migración falla con
+# "no responde la API".
+PANEL_PORT="$(sed -n 's/^PANEL_PORT=//p' "$ENV_FILE" 2>/dev/null | tail -n 1 | tr -d '[:space:]')"
+PANEL_PORT="${PANEL_PORT:-3000}"
+
+APP_URL="${APP_URL:-http://127.0.0.1:$PANEL_PORT}"
 PANEL_USER="${PANEL_USER:-admin}"
 APP_CONTAINER="${APP_CONTAINER:-actions-self-hosted}"
 DOCKER_CMD="${DOCKER:-docker}"

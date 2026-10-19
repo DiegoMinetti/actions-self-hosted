@@ -64,6 +64,10 @@ echo "    .env OK (RUNNER_VERSION=$(env_value RUNNER_VERSION), PANEL_PORT=$PANEL
 
 # La URL del panel sigue al puerto configurado.
 APP_URL="${APP_URL:-http://127.0.0.1:$PANEL_PORT}"
+# OJO: hay que exportarla. El script de migración es un proceso hijo y usa
+# APP_URL; si no se exporta, cae en su default (3000) y falla con
+# "no responde la API" cuando el panel está en otro puerto.
+export APP_URL
 
 api_curl() {
   if [[ -n "${PANEL_PASSWORD:-}" ]]; then
