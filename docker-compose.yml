@@ -44,7 +44,13 @@ services:
       context: ./docker/runner
       args:
         RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
-    command: ['true']
+    # OJO: hay que sobreescribir el ENTRYPOINT, no el CMD. La imagen tiene
+    # ENTRYPOINT (runner-entrypoint.sh), así que `command: ["true"]` solo
+    # cambiaría el CMD y el entrypoint correría igual -> el servicio salía
+    # con código 1 y `depends_on: service_completed_successfully` impedía
+    # arrancar la app. Con `entrypoint` se corre un no-op que termina en 0.
+    entrypoint: ['/bin/true']
+    command: []
     restart: 'no'
 
   app:

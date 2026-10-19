@@ -16,7 +16,11 @@ services:
       context: ./docker/runner
       args:
         RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
-    command: ['true']
+    # Hay que sobreescribir el ENTRYPOINT (no el CMD): la imagen lo tiene, y
+    # si corre, el entrypoint falla sin credenciales y el servicio no
+    # termina con éxito.
+    entrypoint: ['/bin/true']
+    command: []
     restart: 'no'
 
   api:

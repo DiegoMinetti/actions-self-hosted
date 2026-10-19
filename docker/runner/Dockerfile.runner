@@ -65,7 +65,13 @@ RUN mkdir -p /runner-data \
 
 # El entrypoint va en /usr/local/bin y NO en /home/runner: ese directorio es
 # el work dir del runner y la app monta un volumen ahí en algunos flujos.
-COPY --chmod=755 entrypoint.sh /usr/local/bin/runner-entrypoint.sh
+#
+# Se hace `COPY` + `chmod` en vez de `COPY --chmod` para que el Dockerfile
+# también compile con el builder clásico (sin BuildKit), que es el que usan
+# algunos CI. Con BuildKit el `--chmod` evita una capa extra, pero no vale
+# la pena perder la compatibilidad.
+COPY entrypoint.sh /usr/local/bin/runner-entrypoint.sh
+RUN chmod 755 /usr/local/bin/runner-entrypoint.sh
 
 USER runner
 

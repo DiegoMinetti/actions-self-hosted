@@ -130,13 +130,22 @@ db.close();
 # --- migración --------------------------------------------------------------
 
 runners=$(api_curl "$APP_URL/api/runners" | jq -c '.runners[]')
-[[ -n "$runners" ]] || die "la API no devolvió runners"
+expected_count=$(printf '%s\n' "$runners" | grep -c . || true)
+[[ "$expected_count" -gt 0 ]] || die "la API no devolvió runners"
 
 migrated=()
 skipped=()
+processed=0
 
+# OJO: con `done <<< "$runners"` (herestring) bash crea un temp file, y en
+# entornos restringidos eso falla. Peor: el fallo era SILENCIOSO (la redirección
+# del while falla, el cuerpo nunca corre y el script termina con 0 sin haber
+# migrado nada). Con process substitution (`< <(...)`) se usa una FIFO, que no
+# necesita temp file, y el loop corre en el shell actual (así el array
+# `migrated` persiste).
 while IFS= read -r runner; do
   [[ -n "$runner" ]] || continue
+  processed=$((processed + 1))
   name=$(echo "$runner" | jq -r '.name')
   id=$(echo "$runner" | jq -r '.id')
   old_vol=$(echo "$runner" | jq -r '.volumeName')
@@ -161,7 +170,16 @@ while IFS= read -r runner; do
   # Si el recreate falla, la DB quedaría apuntando al volumen nuevo mientras
   # el container sigue usando el viejo. Revertimos la DB para que el runner
   # quede consistente y operativo, y no lo migramos.
-  if ! api_curl -X POST "$APP_URL/api/runners/$id/recreate" -H 'Content-Type: application/json' -d '{}' \
+  #
+  # MIGRATION_TOKEN: si se setea, se pasa como registrationToken explícito.
+  # Útil cuando el PAT de la app está vencido pero tenés un token fresco a
+  # mano. Si no se setea, la app lo genera sola con el PAT del runner.
+  if [[ -n "${MIGRATION_TOKEN:-}" ]]; then
+    recreate_body="{\"registrationToken\":\"${MIGRATION_TOKEN}\"}"
+  else
+    recreate_body='{}'
+  fi
+  if ! api_curl -X POST "$APP_URL/api/runners/$id/recreate" -H 'Content-Type: application/json' -d "$recreate_body" \
     | jq -c '{name, status, containerState, image, volumeName, lastError}'; then
     warn "$name: el recreate falló, revirtiendo volume_name/image en la DB"
     update_db "$id" "$old_vol" "$old_image"
@@ -170,7 +188,14 @@ while IFS= read -r runner; do
   fi
 
   migrated+=("$name:$old_vol")
-done <<< "$runners"
+done < <(printf '%s\n' "$runners")
+
+# Guard: si la API devolvió runners pero no procesamos ninguno, algo falló
+# en silencio. Es mejor abortar que terminar con 0 sin haber migrado nada.
+if [[ "$processed" -ne "$expected_count" ]]; then
+  die "se esperaban $expected_count runners y se procesaron $processed. Abortando sin migrar."
+fi
+log "Procesados $processed runners ($((expected_count - processed)) sin cambios)"
 
 # --- verificación -----------------------------------------------------------
 
