@@ -21,6 +21,12 @@ App: <https://github.com/DiegoMinetti/actions-self-hosted>
 ```bash
 cd ~/apps/actions-self-hosted
 
+# Deploy completo en un solo comando (build + deploy + migración de volúmenes
+# + verificación). Necesita sudo por el socket de Docker.
+sudo ./scripts/deploy.sh
+sudo ./scripts/deploy.sh --purge    # además borra los volúmenes viejos
+
+# O a mano:
 docker compose ps                  # estado
 docker compose logs -f app         # logs de la API
 docker compose up -d --build       # redeploy (rebuild de app + imagen del runner)
