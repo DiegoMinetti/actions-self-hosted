@@ -66,14 +66,17 @@ services:
     environment:
       NODE_ENV: production
       API_PORT: '3000'
-      CORS_ORIGIN: http://localhost:3000
+      CORS_ORIGIN: http://localhost:${PANEL_PORT:-3000}
       DB_PATH: /app/data/runners.db
       COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-actions-self-hosted}
       # Versión del runner. La app deriva de acá el tag de la imagen que usa
       # para crear los containers (ver apps/api/src/runner-image.ts).
       RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
     ports:
-      - '3000:3000'
+      # Puerto en el HOST. El container siempre escucha en 3000 adentro.
+      # Configurable con PANEL_PORT (en .env) porque este server va a
+      # levantar más servicios y cada uno necesita su puerto.
+      - '${PANEL_PORT:-3000}:3000'
     volumes:
       - app-data:/app/data
       # Socket Docker del host. En Mac/Linux queda así; en Windows hay que

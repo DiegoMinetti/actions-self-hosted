@@ -10,8 +10,8 @@ App: <https://github.com/DiegoMinetti/actions-self-hosted>
 | Qué                             | Dónde                                                                                             |
 | ------------------------------- | ------------------------------------------------------------------------------------------------- |
 | Código de la app                | `flserver@flserver:~/apps/actions-self-hosted`                                                    |
-| Panel                           | `http://flserver.taile5d29.ts.net/` (solo tailnet)                                                |
-| Panel local en el server        | `http://127.0.0.1:3000`                                                                           |
+| Panel                           | `http://flserver:8090` (solo tailnet) — o `http://flserver/` (puerto 80)                          |
+| Panel local en el server        | `http://127.0.0.1:8090`                                                                           |
 | DB (PATs encriptados + runners) | volumen Docker `actions-self-hosted-data` → `/app/data/runners.db`                                |
 | Imagen del runner               | `actions-self-hosted-runner:<version>` (wrapper sobre `ghcr.io/actions/actions-runner:<version>`) |
 | Runners                         | `flserver-1`, `flserver-2` — scope `org`, target `FewLines-com-ar`                                |
@@ -32,8 +32,19 @@ docker compose logs -f app         # logs de la API
 docker compose up -d --build       # redeploy (rebuild de app + imagen del runner)
 docker compose down                # parar
 
-curl -s http://127.0.0.1:3000/api/health
+curl -s http://127.0.0.1:8090/api/health
 ```
+
+### El puerto
+
+`PANEL_PORT` (en `.env`) define el puerto en el **host**. El container siempre
+escucha en 3000 adentro; lo que cambia es el puerto publicado.
+
+En flserver es **8090**, porque el 3000 ya lo usa StatusCluster (`3000:80`) y
+este server va a levantar más servicios. Para cambiarlo: editá `PANEL_PORT` en
+el `.env`, corré `docker compose up -d` y reconfigurá el serve de Tailscale
+(`tailscale serve --bg --http=<puerto> http://127.0.0.1:<puerto>`).
+`scripts/deploy.sh` hace las dos cosas.
 
 ## Dos imágenes, dos sponsors
 
@@ -168,17 +179,21 @@ es por Tailscale:
 
 ```bash
 # desde cualquier equipo en la tailnet
-http://flserver.taile5d29.ts.net/
+http://flserver:8090/
 
 # o por túnel SSH
-ssh -L 3000:127.0.0.1:3000 flserver@flserver
+ssh -L 8090:127.0.0.1:8090 flserver@flserver
 ```
+
+El acceso sale por **Tailscale serve**, que escucha en la interfaz de Tailscale
+(por eso el panel queda en `http://flserver:8090` sin abrir la LAN). Como no
+depende del binding de Docker, sobrevive a cualquier recreado del container.
 
 Para habilitar HTTPS en la tailnet (y servir el panel con TLS):
 <https://login.tailscale.com/f/serve?node=nuGVpBaWhU11CNTRL> — y después:
 
 ```bash
-tailscale serve --bg 3000
+tailscale serve --bg --http=8090 http://127.0.0.1:8090
 ```
 
 ### Si hay que exponerlo fuera de la tailnet

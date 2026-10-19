@@ -29,7 +29,7 @@ for arg in "$@"; do
   esac
 done
 
-APP_URL="${APP_URL:-http://127.0.0.1:3000}"
+APP_URL="${APP_URL:-}"
 ENV_FILE="$REPO_ROOT/.env"
 
 log()  { echo; echo "==> $*"; }
@@ -55,9 +55,15 @@ env_value() {
 }
 export PANEL_USER="$(env_value PANEL_USER)"
 export PANEL_PASSWORD="$(env_value PANEL_PASSWORD)"
+PANEL_PORT="$(env_value PANEL_PORT)"
+PANEL_PORT="${PANEL_PORT:-3000}"
+export PANEL_PORT
 : "${PANEL_USER:?PANEL_USER no está en .env}"
 : "${PANEL_PASSWORD:?PANEL_PASSWORD no está en .env}"
-echo "    .env OK (RUNNER_VERSION=$(env_value RUNNER_VERSION))"
+echo "    .env OK (RUNNER_VERSION=$(env_value RUNNER_VERSION), PANEL_PORT=$PANEL_PORT)"
+
+# La URL del panel sigue al puerto configurado.
+APP_URL="${APP_URL:-http://127.0.0.1:$PANEL_PORT}"
 
 api_curl() {
   if [[ -n "${PANEL_PASSWORD:-}" ]]; then
@@ -115,7 +121,22 @@ log "Estado de los runners"
 sleep 8
 api_curl "$APP_URL/api/runners" | jq -r '.runners[] | "    \(.name): estado=\(.status) container=\(.containerState) imagen=\(.image) volumen=\(.volumeName) github=\(.githubStatus)"'
 
-# --- 6. purgar los volúmenes viejos ----------------------------------------
+# --- 6. publicar en Tailscale -----------------------------------------------
+
+log "Configurando Tailscale serve"
+if command -v tailscale >/dev/null 2>&1; then
+  # Tailscale serve escucha en la interfaz de Tailscale, así que el panel
+  # queda accesible como http://flserver:<PANEL_PORT> SIN abrir la LAN.
+  # No depende del binding de Docker: sobrevive a cualquier recreado.
+  tailscale serve --bg --http="$PANEL_PORT" "http://127.0.0.1:$PANEL_PORT" 2>&1 | head -3
+  # Re-apunta la entrada que ya existía en :80 al puerto actual.
+  tailscale serve --bg --http=80 "http://127.0.0.1:$PANEL_PORT" 2>&1 | head -3
+  tailscale serve status 2>&1 | head -10
+else
+  warn "tailscale no está instalado: el panel queda solo en 127.0.0.1:$PANEL_PORT"
+fi
+
+# --- 7. purgar los volúmenes viejos ----------------------------------------
 
 if [[ "$PURGE" == "1" ]]; then
   log "Borrando los volúmenes viejos"

@@ -71,7 +71,11 @@ docker compose up -d --build
 ```
 
 Esto construye **las dos** imágenes (la app y la del runner) y levanta el
-panel en `http://localhost:3000`.
+panel en `http://localhost:3000` (o el `PANEL_PORT` que tengas en `.env`).
+
+> El puerto publicado es configurable con `PANEL_PORT` porque un mismo server
+> puede levantar varios servicios, cada uno con su puerto. El container
+> siempre escucha en 3000 adentro; lo que cambia es el puerto del host.
 
 > ⚠️ El bind del socket Docker (`/var/run/docker.sock`) asume host Mac/Linux.
 > En Windows hay que ajustar la ruta del socket.
@@ -221,7 +225,8 @@ cp .env.example .env
 
 | Variable               | Default                 | Descripción                                            |
 | ---------------------- | ----------------------- | ------------------------------------------------------ |
-| `API_PORT`             | `3000`                  | Puerto del backend                                     |
+| `API_PORT`             | `3000`                  | Puerto del backend (dentro del container)              |
+| `PANEL_PORT`           | `3000`                  | Puerto del backend en el host (el que se publica)      |
 | `NODE_ENV`             | `development`           | `development` \| `production` \| `test`                |
 | `CORS_ORIGIN`          | `http://localhost:5173` | Origen permitido para CORS                             |
 | `DB_PATH`              | `data/runners.db`       | Path al archivo SQLite                                 |
