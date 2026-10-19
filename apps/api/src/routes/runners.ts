@@ -10,8 +10,8 @@ const router: RouterType = Router();
 // --- Schemas ---
 
 // `image` NO es aceptado: la app usa una imagen wrapper fija
-// (`actions-runner:2.336.0` por default en el service) y no se puede
-// cambiar desde el body. Si el user manda `image`, zod lo rechaza.
+// (la que resuelve RUNNER_VERSION en el service) y no se puede cambiar
+// desde el body. Si el user manda `image`, zod lo rechaza.
 //
 // `registrationToken` es opcional: si no se pasa, la app lo genera
 // automáticamente con el `githubPatId` (o con el PAT que matchee

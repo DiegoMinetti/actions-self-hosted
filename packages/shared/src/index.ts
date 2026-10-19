@@ -55,7 +55,11 @@ export interface Runner {
   /** Para scope=repo, "owner/repo". Para scope=org, "org". */
   targetSlug: string;
   labels: string[];
-  /** Imagen Docker a usar. Default: actions-runner:2.336.0 (wrapper local). */
+  /**
+   * Imagen Docker a usar. Es fija para todos los runners: la app la
+   * resuelve desde RUNNER_VERSION / RUNNER_IMAGE (ver
+   * `apps/api/src/runner-image.ts`).
+   */
   image: string;
   /** Nombre del container en Docker. */
   containerName: string;
@@ -167,6 +171,8 @@ export interface DockerInfo {
   apiVersion?: string;
   os?: string;
   arch?: string;
+  /** Tag de la imagen del runner que usa la app (derivado de RUNNER_VERSION). */
+  runnerImage?: string;
   containers?: {
     total: number;
     running: number;

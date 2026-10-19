@@ -13,26 +13,25 @@ import {
 } from '../docker/containers.js';
 import { getDocker } from '../docker/client.js';
 import { GitHubService } from './github-service.js';
+import { HELPER_IMAGE, RUNNER_IMAGE } from '../runner-image.js';
 
 /**
  * Helper: garantiza que la imagen está disponible en el daemon local
  * antes de crear el container.
  *
  * `docker.createContainer` NO hace pull automático: si la imagen no está
- * local, falla con un 404 opaco ("No such image: ..."). El caso típico
- * es que el user elige la imagen default `ghcr.io/actions/actions-runner:latest`
- * y nunca la pull-eó.
+ * local, falla con un 404 opaco ("No such image: ...").
  *
- * Para imágenes LOCALES (sin registry prefix, como `actions-runner:2.336.0`
- * que buildeamos con `docker/runner/build.sh`), `docker.pull` no sirve:
- * Docker no chequea el cache local en `pull`, va derecho a Docker Hub y
- * falla con "pull access denied" porque la imagen no existe ahí. Por eso
+ * Para imágenes LOCALES (sin registry prefix, como
+ * `actions-self-hosted-runner:2.338.0` que construye compose), `docker.pull`
+ * no sirve: Docker no chequea el cache local en `pull`, va derecho a Docker
+ * Hub y falla con "pull access denied" porque la imagen no existe ahí. Por eso
  * primero inspeccionamos con `getImage().inspect()` y skipeamos el pull
  * si la imagen ya está local.
  *
  * Si la imagen no está, intenta el pull. Si el pull falla (registry
- * caído, sin red, etc.) tira error claro en vez del genérico 404 del
- * createContainer.
+ * caído, sin red, o una imagen que solo existe en el build local) tira
+ * un error claro en vez del genérico 404 del createContainer.
  */
 async function ensureImage(image: string): Promise<void> {
   const docker = getDocker();
@@ -47,27 +46,35 @@ async function ensureImage(image: string): Promise<void> {
 
   // 2) No está local, intentar pull. Sigue el progreso vía modem.followProgress
   //    porque dockerode expone el pull como un stream.
-  await new Promise<void>((resolve, reject) => {
-    docker.pull(image, (pullErr: unknown, stream: NodeJS.ReadableStream) => {
-      if (pullErr) {
-        reject(pullErr);
-        return;
-      }
-      docker.modem.followProgress(
-        stream,
-        (followErr: unknown) => {
-          if (followErr) reject(followErr);
-          else resolve();
-        },
-        () => {
-          // progress event — silencioso
-        },
-      );
+  try {
+    await new Promise<void>((resolve, reject) => {
+      docker.pull(image, (pullErr: unknown, stream: NodeJS.ReadableStream) => {
+        if (pullErr) {
+          reject(pullErr);
+          return;
+        }
+        docker.modem.followProgress(
+          stream,
+          (followErr: unknown) => {
+            if (followErr) reject(followErr);
+            else resolve();
+          },
+          () => {
+            // progress event — silencioso
+          },
+        );
+      });
     });
-  });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `La imagen "${image}" no está en el daemon local y no se pudo bajar: ${detail}. ` +
+        `Si es la imagen que construye este proyecto, corré \`docker compose build runner-image\` ` +
+        `(o \`docker compose up -d --build\`) para generarla.`,
+    );
+  }
 }
 
-const DEFAULT_IMAGE = 'actions-runner:2.336.0';
 const DEFAULT_GROUP = 'Default';
 const DEFAULT_LABELS = ['self-hosted', 'linux', 'x64'];
 const DEFAULT_RESTART_POLICY = 'unless-stopped';
@@ -78,8 +85,12 @@ const DEFAULT_RESTART_POLICY = 'unless-stopped';
  *
  * Convenciones:
  *   - containerName: `actions-runner-<name>`
- *   - volumeName:    `actions-runner-<name>-home`
+ *   - volumeName:    `actions-runner-<name>-data`
  *   - name: kebab-case, único. El user lo elige.
+ *
+ * El volumen guarda SOLO las credenciales del runner (`.runner` y
+ * `.credentials`), montadas en /runner-data. El work dir del runner
+ * (`/home/runner`, con los binarios) vive en la imagen del runner.
  */
 
 function deriveTargetUrl(scope: CreateRunnerRequest['scope'], target: string): string {
@@ -125,11 +136,11 @@ export const RunnerService = {
     }
 
     // 2) Calcular nombres y defaults. La imagen es FIJA: siempre
-    //    DEFAULT_IMAGE. El user no la puede elegir al crear.
+    //    RUNNER_IMAGE (la que construye compose). El user no la puede elegir.
     const containerName = `actions-runner-${input.name}`;
-    const volumeName = `actions-runner-${input.name}-home`;
+    const volumeName = `actions-runner-${input.name}-data`;
     const labels = input.labels?.length ? input.labels : DEFAULT_LABELS;
-    const image = DEFAULT_IMAGE;
+    const image = RUNNER_IMAGE;
     const runnerGroup = input.runnerGroup ?? DEFAULT_GROUP;
     const restartPolicy = input.restartPolicy ?? DEFAULT_RESTART_POLICY;
     const targetUrl = deriveTargetUrl(input.scope, input.target);
@@ -265,10 +276,10 @@ export const RunnerService = {
     const runner = this.mustFind(id);
     const { containerName, volumeName, scope, target, labels } = runner;
     const runnerGroup = 'Default';
-    // La imagen es FIJA — siempre el default actual, no lo que tenga
-    // guardado el registro. Así, si actualizamos DEFAULT_IMAGE en una
-    // nueva release, los runners existentes usan la nueva al recrear.
-    const image = DEFAULT_IMAGE;
+    // La imagen es FIJA — siempre la que define RUNNER_IMAGE, no la que tenga
+    // guardado el registro. Así, si actualizamos la versión del runner, los
+    // runners existentes usan la nueva al recrear.
+    const image = RUNNER_IMAGE;
 
     // Auto-generar el token con el PAT del runner si no vino en el body.
     const token = await resolveRegistrationToken(
@@ -325,7 +336,7 @@ export const RunnerService = {
     const { containerName, volumeName, scope, target, labels } = runner;
     const runnerGroup = 'Default'; // se podría persistir en otra columna
     // La imagen es FIJA — siempre el default actual.
-    const image = DEFAULT_IMAGE;
+    const image = RUNNER_IMAGE;
 
     // Auto-generar el token con el PAT del runner si no vino en el body.
     const token = await resolveRegistrationToken(
@@ -469,15 +480,19 @@ export const RunnerService = {
 /**
  * Helper: borra .runner y .credentials de un volumen usando un container
  * auxiliar de alpine. Es la forma más portable (no depende de paths del host).
+ *
+ * El volumen se monta en /runner-data (no en /home/runner) porque es ahí
+ * donde la app persiste las credenciales del runner.
  */
 async function wipeVolumeCredentials(volumeName: string): Promise<void> {
   const docker = getDocker();
+  await ensureImage(HELPER_IMAGE);
   const container = await docker.createContainer({
-    Image: 'alpine:latest',
-    Cmd: ['sh', '-c', 'rm -f /home/runner/.runner /home/runner/.credentials && echo OK'],
+    Image: HELPER_IMAGE,
+    Cmd: ['sh', '-c', 'rm -f /runner-data/.runner /runner-data/.credentials && echo OK'],
     HostConfig: {
       AutoRemove: true,
-      Binds: [`${volumeName}:/home/runner`],
+      Binds: [`${volumeName}:/runner-data`],
     },
   });
   await container.start();

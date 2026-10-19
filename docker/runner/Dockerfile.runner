@@ -1,55 +1,84 @@
-# Wrapper de la imagen oficial de actions/runner.
+# =============================================================================
+# Imagen del runner de GitHub Actions.
 #
-# Por qué existe este Dockerfile (Sprint 2+):
-# La imagen oficial `ghcr.io/actions/actions-runner:*` dejó de traer
-# ENTRYPOINT configurado en versiones recientes (Q1 2025+). Solo trae
-# `CMD ["/bin/bash"]`, lo cual hace que el container arranque en bash
-# y el listener del runner nunca se ejecute.
+# BASE: la imagen OFICIAL de GitHub (`ghcr.io/actions/actions-runner`), que trae
+# el binario `Runner.Listener` sin tocar y todo el toolchain (node, externals).
+# Es multi-arch: el mismo Dockerfile produce linux/amd64 y linux/arm64.
 #
-# Este wrapper:
-# 1) Toma la imagen oficial como base (mantenemos la versión oficial
-#    del binario `Runner.Listener`).
-# 2) Le agrega un ENTRYPOINT explícito que invoca `/home/runner/run.sh`,
-#    que es el entrypoint "vivo" que la imagen sí trae pero Docker
-#    no invoca por sí solo.
+# POR QUÉ EXISTE ESTE WRAPPER (y por qué no se usa la oficial directo):
 #
-# Build:
+# 1. La imagen oficial NO trae ENTRYPOINT — solo `CMD ["/bin/bash"]`. Docker
+#    arranca el container en bash y el listener del runner nunca corre.
+# 2. La imagen oficial NO auto-configura: su `run.sh` invoca el listener pero
+#    nunca llama a `config.sh`, así que sin credenciales en disco el listener
+#    falla con "Not configured" y entra en loop.
+#
+#QUÉ LE AGREGAMOS:
+#
+# 1. Un ENTRYPOINT propio (`entrypoint.sh`) que hace el flow completo:
+#    restaurar credenciales -> config.sh si hace falta -> exec del listener.
+# 2. Un punto de montage nuevo para la persistencia: `/runner-data`.
+#
+# POR QUÉ `/runner-data` Y NO `/home/runner` (que es donde la imagen oficial
+# guarda bin/, externals/, config.sh y run.sh):
+#
+# El work dir del runner TIENE que ser `/home/runner`, porque el listener lee
+# el archivo `.runner` desde el CWD. Si montamos el volumen persistente ahí,
+# el volumen pisa la distribución oficial y quedan congelados los binarios de
+# la versión con la que se creó el volumen. Reproducido: un volumen creado con
+# la 2.328.0 seguía sirviendo los binarios de 2.328.0 después de correr la
+# imagen 2.338.0. O sea, el tag de la imagen era cosmético y "Recreate" no
+# actualizaba el runner.
+#
+# Con este diseño:
+#   - `/home/runner`  -> efímero, viene SIEMPRE de la imagen oficial.
+#                         El tag de la imagen ES la versión real del runner.
+#   - `/runner-data`  -> volumen persistente con SOLO `.runner` y
+#                         `.credentials` (unos pocos KB). Las credenciales
+#                         sobreviven a stop/start y recreate, que es lo único
+#                         que hay que preservar.
+#
+# Build (normalmente lo hace compose, no hace falta a mano):
+#   docker compose build runner-image
+#
+# Build manual:
 #   docker build -f docker/runner/Dockerfile.runner \
-#     -t actions-runner:2.336.0 docker/runner
-#
-# Para actualizar a una nueva versión, cambiar RUNNER_VERSION abajo
-# y rebuildear. La app usa el tag de la imagen local (no :latest)
-# para ser reproducible.
-#
-# Ver también: docker/runner/entrypoint.sh y apps/api/src/services/runner-service.ts
-# (constante DEFAULT_IMAGE).
+#     --build-arg RUNNER_VERSION=2.338.0 \
+#     -t actions-self-hosted-runner:2.338.0 docker/runner
+# =============================================================================
 
-ARG RUNNER_VERSION=2.336.0
+ARG RUNNER_VERSION=2.338.0
 FROM ghcr.io/actions/actions-runner:${RUNNER_VERSION}
 
-# El entrypoint oficial vive en /home/runner/run.sh. Algunos plugins
-# (cache, toolcache) se inicializan en el primer arranque del listener;
-# prefijamos con `exec` para que el PID 1 del container sea el proceso
-# del runner (importante para que señales como SIGTERM lleguen al listener
-# y no a un wrapper de bash).
-#
-# Path: lo copiamos a /usr/local/bin/ (no a /home/runner/) porque la app
-# monta el volumen del runner en /home/runner y eso pisa el directorio
-# completo. Si el entrypoint estuviera adentro, Docker tiraría
-# "No such file or directory" al arrancar.
-#
-# `--chmod=755` (BuildKit) setea los permisos en el COPY porque la imagen
-# base corre como user `runner` (1001) y no puede chmod archivos en
-# /home/runner/owned-by-root en un RUN posterior.
+# El usuario por defecto de la imagen oficial es `runner` (uid 1001). Hacemos
+# el setup como root y al final volvemos a `runner` para no cambiar el
+# comportamiento de la imagen oficial.
+USER root
+
+# Directorio de persistencia (volumen montado por la app).
+# Tiene que quedar con permisos 0777 y owner `runner` porque el container corre
+# como `1001:0` (ver `apps/api/src/docker/containers.ts`): el volumen toma
+# owner y permisos del punto de montaje de la imagen.
+RUN mkdir -p /runner-data \
+    && chown runner:runner /runner-data \
+    && chmod 0777 /runner-data
+
+# El entrypoint va en /usr/local/bin y NO en /home/runner: ese directorio es
+# el work dir del runner y la app monta un volumen ahí en algunos flujos.
 COPY --chmod=755 entrypoint.sh /usr/local/bin/runner-entrypoint.sh
+
+USER runner
+
+# `RUNNER_ALLOW_RUNASROOT=1` porque la imagen oficial corre como root adentro
+# y su `run.sh` valida esto. La app también la pasa como env en runtime
+# (containers.ts), así que este ENV es solo un fallback.
+# `ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1` saca los logs del listener a stdout
+# (si no, se pierden al reiniciar el container).
+ENV RUNNER_ALLOW_RUNASROOT=1 \
+    ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    RUNNER_DATA_DIR=/runner-data \
+    RUNNER_WORK_DIR=/home/runner
 
 ENTRYPOINT ["/usr/local/bin/runner-entrypoint.sh"]
 CMD ["run"]
-
-# Defaults razonables. RUNNER_ALLOW_RUNASROOT=1 porque la imagen oficial
-# corre como root adentro; el entrypoint `run.sh` valida esto y rechaza
-# sin esa var. La app también la pasa como env en runtime (containers.ts),
-# así que este ENV es solo un fallback.
-ENV RUNNER_ALLOW_RUNASROOT=1 \
-    ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT=1 \
-    DEBIAN_FRONTEND=noninteractive

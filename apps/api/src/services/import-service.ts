@@ -3,11 +3,12 @@ import type { Runner, RunnerScope } from '@actions-self-hosted/shared';
 import { RunnersRepo } from '../db/runners-repo.js';
 import { getDocker, pingDocker } from '../docker/client.js';
 import { inspectContainer, mapContainerState } from '../docker/containers.js';
+import { RUNNER_IMAGE } from '../runner-image.js';
 
-// Imagen fija que usa la app. Se importa con la imagen real del container
+// Imagen que usa la app. Se importa con la imagen real del container
 // existente solo para registro/debug, pero al recrear/renovar siempre se
-// usa DEFAULT_IMAGE (ver runner-service.ts).
-const APP_DEFAULT_IMAGE = 'actions-runner:2.336.0';
+// usa RUNNER_IMAGE (ver runner-image.ts).
+const APP_DEFAULT_IMAGE = RUNNER_IMAGE;
 
 export interface ImportExistingArgs {
   /** Container name real (e.g. "github-runner-misnumeros-1"). */
@@ -37,7 +38,7 @@ export interface ImportExistingResult {
  * Saca del `docker inspect`:
  *   - image
  *   - env var RUNNER_LABELS
- *   - mount de tipo volume en /home/runner
+ *   - mount de tipo volume en /runner-data (o /home/runner en el layout viejo)
  *   - container state
  *   - restart policy
  *
@@ -90,15 +91,19 @@ export async function importExistingContainer(
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // Buscar el mount de tipo volume en /home/runner
+  // Buscar el mount de tipo volume donde la app persiste las credenciales.
+  // El layout actual monta en /runner-data; /home/runner es el layout viejo
+  // (pre-2.338.0), donde el volumen pisaba los binarios del runner.
   const mounts = info.Mounts ?? [];
-  const homeMount = mounts.find((m) => m.Destination === '/home/runner' && m.Type === 'volume');
-  if (!homeMount?.Name) {
+  const dataMount =
+    mounts.find((m) => m.Destination === '/runner-data' && m.Type === 'volume') ??
+    mounts.find((m) => m.Destination === '/home/runner' && m.Type === 'volume');
+  if (!dataMount?.Name) {
     throw new Error(
-      `Container "${args.containerName}" no tiene un volumen montado en /home/runner`,
+      `Container "${args.containerName}" no tiene un volumen montado en /runner-data`,
     );
   }
-  const volumeName = homeMount.Name;
+  const volumeName = dataMount.Name;
 
   const imageReal = info.Config?.Image ?? 'unknown';
   // La imagen del registro se setea a la default de la app. El campo

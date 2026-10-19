@@ -1,19 +1,52 @@
-# Producción: un solo container con API + frontend bundle.
-# Levanta con: docker compose up --build -d
-# Abrí:       http://localhost:3000
+# =============================================================================
+# actions-self-hosted — panel de gestión de runners self-hosted de GitHub Actions.
 #
-# Persistencia: la DB SQLite vive en el volume `actions-self-hosted-data`.
-# Socket Docker del host: bindeado para que el container pueda crear/manipular
-#   containers de runners.
+# Levantar:      docker compose up -d --build
+# Ver estado:    docker compose ps
+# Ver logs:      docker compose logs -f app
+# Parar:         docker compose down
 #
-# El `name:` de arriba fuerza el project name en Docker Desktop.
-# Sin esto, docker compose lo calcula del directorio padre y lo normaliza
-# a "actionsselfhosted" (sin guión). Con `name: actions-self-hosted` matchea
-# el COMPOSE_PROJECT_NAME que usa la API para etiquetar los runners.
-
+# Persistencia:
+#   - La DB SQLite de la app vive en el volume `actions-self-hosted-data`.
+#   - El socket Docker del host va bindeado porque la API gestiona containers.
+#
+# El `name:` de arriba fuerza el project name. Sin esto, docker compose lo
+# calcula del directorio padre y lo normaliza a "actionsselfhosted" (sin
+# guión). Con `name: actions-self-hosted` matchea el COMPOSE_PROJECT_NAME que
+# usa la API para etiquetar los runners.
+# =============================================================================
 name: actions-self-hosted
 
 services:
+  # ---------------------------------------------------------------------------
+  # Imagen del runner de GitHub Actions.
+  #
+  # Es un wrapper FINITO sobre la imagen OFICIAL de GitHub
+  # (`ghcr.io/actions/actions-runner:<version>`), que es la que trae el
+  # binario `Runner.Listener` sin tocar. Al wrapper solo se le agrega lo que
+  # a la oficial le falta: ENTRYPOINT y auto-configure.
+  #
+  # Se construye ACÁ y no a mano para que el deploy sea reproducible desde el
+  # repo: un server nuevo levanta todo con `docker compose up -d --build`,
+  # sin que nadie tenga que buildear la imagen en otra máquina ni publicarla
+  # en un registry.
+  #
+  # La versión sale de RUNNER_VERSION (ver `.env`), que es la única variable
+  # que hay que tocar para actualizar el runner. La app lee la misma variable
+  # para resolver el tag, así que no hay forma de que se desincronicen.
+  #
+  # `command: ["true"]` lo deja como un one-shot que termina OK: existe solo
+  # para forzar el build y ordenar el arranque de la app.
+  # ---------------------------------------------------------------------------
+  runner-image:
+    image: actions-self-hosted-runner:${RUNNER_VERSION:-2.338.0}
+    build:
+      context: ./docker/runner
+      args:
+        RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
+    command: ['true']
+    restart: 'no'
+
   app:
     build:
       context: .
@@ -22,11 +55,23 @@ services:
     container_name: actions-self-hosted
     restart: unless-stopped
     init: true
+    depends_on:
+      runner-image:
+        condition: service_completed_successfully
+    # Secretos y config opcional (APP_ENCRYPTION_KEY, PANEL_USER, ...).
+    # `.env` está en .gitignore. Si no existe, se usan los defaults de abajo.
+    env_file:
+      - path: .env
+        required: false
     environment:
       NODE_ENV: production
       API_PORT: '3000'
       CORS_ORIGIN: http://localhost:3000
       DB_PATH: /app/data/runners.db
+      COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-actions-self-hosted}
+      # Versión del runner. La app deriva de acá el tag de la imagen que usa
+      # para crear los containers (ver apps/api/src/runner-image.ts).
+      RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
     ports:
       - '3000:3000'
     volumes:
@@ -35,7 +80,8 @@ services:
       # cambiar a la ruta del named pipe (ver README).
       - /var/run/docker.sock:/var/run/docker.sock
     healthcheck:
-      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3000/api/health']
+      test:
+        ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost:3000/api/health']
       interval: 10s
       timeout: 3s
       retries: 3

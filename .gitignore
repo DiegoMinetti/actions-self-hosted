@@ -21,6 +21,11 @@ logs/
 .env.*.local
 !.env.example
 
+# Overrides locales de compose (suelen llevar la master key de encriptación
+# y las credenciales del panel). NUNCA commitear.
+docker-compose.override.yml
+docker-compose.*.override.yml
+
 # Runtime data
 data/
 *.db

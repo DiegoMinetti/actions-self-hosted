@@ -34,7 +34,8 @@ export interface CreateRunnerContainerArgs {
 /**
  * Crea el container. Precondición: el volumen ya debe existir.
  *
- * Env vars que pasamos al container (las lee el entrypoint oficial de actions/runner):
+ * Env vars que pasamos al container (las lee el entrypoint de
+ * `docker/runner/entrypoint.sh`, que a su vez llama al `config.sh` oficial):
  *   RUNNER_NAME: nombre único del runner
  *   RUNNER_TOKEN: registration token (single-use)
  *   RUNNER_REPO_URL: URL del repo (si scope=repo)
@@ -64,19 +65,31 @@ export async function createRunnerContainer(opts: CreateRunnerContainerArgs): Pr
     Init: true,
     AutoRemove: false,
     Binds: [
-      // Volumen nombrado → persiste .runner y .credentials a través de stop/start.
-      `${opts.volumeName}:/home/runner`,
+      // Volumen nombrado → persiste SOLO las credenciales del runner
+      // (`.runner` + `.credentials`) en /runner-data.
+      //
+      // El work dir `/home/runner` NO se monta a propósito. Ahí viven los
+      // binarios (`bin/`, `externals/`, `config.sh`, `run.sh`) y si el volumen
+      // persistente los pisa, el container queda congelado en la versión con la
+      // que se creó el volumen: el tag de la imagen deja de reflejar la
+      // versión real del runner. Reproducido con un volumen creado con la
+      // 2.328.0 que seguía sirviendo los binarios de 2.328.0 después de
+      // correr la imagen 2.338.0.
+      //
+      // Con este layout los binarios vienen SIEMPRE de la imagen oficial y el
+      // volumen guarda solo unos pocos KB de credenciales.
+      // Ver `docker/runner/Dockerfile.runner`.
+      `${opts.volumeName}:/runner-data`,
       // Socket Docker → para que el runner pueda buildear imágenes dentro de jobs.
       ...(dockerSocketBind ? [`${dockerSocketBind}:/var/run/docker.sock`] : []),
     ],
     // Mismas caps que el setup de MisNumeros (github-runner-misnumeros).
     // Sin DAC_OVERRIDE + CHOWN, corriendo como UID 1000 no podemos acceder
     // a archivos del volumen que quedaron propiedad de UID 1001 de runs
-    // anteriores (típicamente `_diag/*.log`, `.credentials`). El listener
-    // falla con `UnauthorizedAccessException: Access to the path
-    // '/home/runner/_diag/...' is denied` y el container entra en loop
-    // de restart. cap_drop ALL + cap_add específicas minimiza la
-    // superficie de ataque comparado con correr como root.
+    // anteriores (`.credentials`, `.runner`). El listener falla con
+    // `UnauthorizedAccessException: Access to the path '...' is denied` y el
+    // container entra en loop de restart. cap_drop ALL + cap_add específicas
+    // minimiza la superficie de ataque comparado con correr como root.
     CapDrop: ['ALL'],
     CapAdd: ['CHOWN', 'DAC_OVERRIDE', 'SETGID', 'SETUID', 'KILL'],
     SecurityOpt: ['no-new-privileges:true'],
@@ -88,11 +101,11 @@ export async function createRunnerContainer(opts: CreateRunnerContainerArgs): Pr
   // entonces `docker ps` y `docker buildx create` fallan con
   // "permission denied while trying to connect to the docker API".
   // Solución: correr como `1001:0` — el UID 1001 (`runner`) es dueño de
-  // los archivos en /home/runner (los volúmenes preexistentes quedan
-  // con esa propiedad), y GID 0 le da acceso al socket. Alternativa
-  // sería `1000:0` pero ahí los volúmenes viejos con archivos UID 1001
-  // no se pueden escribir sin chmod previo. En Linux nativo (socket
-  // GID 1) también funciona porque GID 0 incluye acceso a GID 1.
+  // los archivos que escribe (las credenciales del volumen) y GID 0 le da
+  // acceso al socket. Alternativa sería `1000:0` pero ahí los volúmenes
+  // viejos con archivos UID 1001 no se pueden escribir sin chmod previo.
+  // En Linux nativo (socket GID 1) también funciona porque GID 0 incluye
+  // acceso a GID 1.
   const runAsUser = '1001:0';
 
   // Labels que agruparán este container en Docker Desktop bajo el header
@@ -116,10 +129,14 @@ export async function createRunnerContainer(opts: CreateRunnerContainerArgs): Pr
   // "To run a command as administrator..." que viene del script run.sh
   // cuando algo lo invoca en un contexto raro).
   //
-  // Para esas imágenes sin ENTRYPOINT, inyectamos `Cmd: ['/home/runner/run.sh']`
-  // explícitamente. Imágenes custom que ya tienen su propio entrypoint
-  // (ej. `github-runner-misnumeros:local` con `entrypoint.sh`) se dejan como
-  // están → `Cmd` queda undefined y se respeta el entrypoint de la imagen.
+  // La imagen oficial `ghcr.io/actions/actions-runner:*` (y cualquier otra
+  // imagen sin ENTRYPOINT) arrancaría el container en bash idle, con el
+  // listener sin ejecutar. Para esas imágenes inyectamos
+  // `Cmd: ['/home/runner/run.sh']` explícitamente.
+  //
+  // La imagen que usa la app (`actions-self-hosted-runner:<version>`) es un
+  // wrapper sobre la oficial que YA trae ENTRYPOINT propio, así que acá
+  // `Cmd` queda undefined y se respeta el entrypoint de la imagen.
   const cmd = await resolveImageCmd(opts.image);
 
   await docker.createContainer({
@@ -252,12 +269,13 @@ async function findContainerByName(name: string): Promise<boolean> {
 /**
  * Devuelve el `Cmd` a pasarle a `createContainer` para que el container
  * arranque el listener del runner. Devuelve `undefined` si la imagen ya
- * tiene un ENTRYPOINT propio (caso típico: imágenes custom como
- * `github-runner-misnumeros:local` con `entrypoint.sh`).
+ * tiene un ENTRYPOINT propio (caso de la imagen que usa la app:
+ * `actions-self-hosted-runner:<version>`).
  *
- * Si la imagen no se puede inspeccionar, asumimos que necesita el Cmd
- * explícito (caso conservador: si la imagen no existe, el `createContainer`
- * va a fallar de todos modos y el error va a ser claro).
+ * Si la imagen no se puede inspeccionar devolvemos `undefined`: en ese caso
+ * el `createContainer` va a fallar igual con "No such image", así que
+ * inyectar un Cmd aparte no aporta nada y podría pisar el entrypoint
+ * correcto de la imagen.
  */
 async function resolveImageCmd(image: string): Promise<string[] | undefined> {
   try {
@@ -269,6 +287,6 @@ async function resolveImageCmd(image: string): Promise<string[] | undefined> {
     }
     return ['/home/runner/run.sh'];
   } catch {
-    return ['/home/runner/run.sh'];
+    return undefined;
   }
 }

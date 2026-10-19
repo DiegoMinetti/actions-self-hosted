@@ -24,6 +24,29 @@ const envSchema = z.object({
    * Formato esperado: hex de 64 chars (32 bytes).
    */
   APP_ENCRYPTION_KEY: z.string().optional(),
+  /**
+   * Versión del runner de GitHub Actions que se usa.
+   * Define la imagen oficial base (`ghcr.io/actions/actions-runner:<version>`)
+   * de la imagen wrapper que construye compose.
+   *
+   * Esta es la ÚNICA variable que hay que tocar para actualizar el runner:
+   * compose la usa para taggear la imagen y la app la usa para resolver el
+   * tag. Ver `docker-compose.yml` y `apps/api/src/runner-image.ts`.
+   */
+  RUNNER_VERSION: z
+    .string()
+    .regex(/^\d+\.\d+\.\d+$/, {
+      message: 'RUNNER_VERSION debe ser X.Y.Z (ej. 2.338.0)',
+    })
+    .default('2.338.0'),
+  /**
+   * Tag de la imagen del runner que usa la app.
+   *
+   * Normally se deriva de RUNNER_VERSION. Solo se setea a mano si la imagen
+   * vive en un registry (ej. `ghcr.io/mi-org/actions-self-hosted-runner:2.338.0`)
+   * en vez de ser la local que construye compose.
+   */
+  RUNNER_IMAGE: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

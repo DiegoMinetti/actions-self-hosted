@@ -1,30 +1,68 @@
 #!/usr/bin/env bash
+# =============================================================================
 # Entrypoint del container del runner.
 #
-# El `run.sh` oficial de la imagen `ghcr.io/actions/actions-runner:*` NO llama
-# a `config.sh` automáticamente cuando recibe `RUNNER_TOKEN` por env. Solo
-# invoca `Runner.Listener run`, que sin credenciales en disco falla con
-# "Not configured" y entra en loop infinito.
+# Flujo de arranque:
 #
-# Este entrypoint es el que sí hace el flow completo:
-#   1) Si hay `RUNNER_TOKEN` y NO existe `.credentials`, corre
-#      `./config.sh --unattended --replace` con todas las env vars.
-#      (Usamos `--replace` para que sobrescriba credenciales stale del
-#      volumen cuando se reusa un volumen con `.credentials` viejo.)
-#   2) Si ya hay `.credentials` (caso típico: container re-arrancado, el
-#      volumen ya tiene credenciales), skipea el configure.
-#   3) `exec /home/runner/run.sh "$@"` para que PID 1 sea el listener real
-#      y las señales del daemon (SIGTERM, SIGINT) lleguen bien.
-set -euo pipefail
+#   1. Si el volumen persistente tiene credenciales (.credentials), se restauran
+#      al work dir -> el listener arranca con la registration existente.
+#   2. Si no hay credenciales, se corre `config.sh --unattended` con las env
+#      vars (RUNNER_TOKEN + RUNNER_REPO_URL / RUNNER_ORG_URL) y después se
+#      persisten al volumen.
+#   3. Se ejecuta el listener oficial (`run.sh` -> `Runner.Listener run`).
+#
+# Layout (ver docker/runner/Dockerfile.runner para el porqué):
+#   /home/runner  -> work dir EFÍMERO, viene de la imagen oficial.
+#                    Acá viven los binarios: el tag de la imagen ES la
+#                    versión real del runner.
+#   /runner-data  -> volumen persistente con SOLO `.runner` y `.credentials`.
+#                    Lo único que hay que preservar entre reinicios.
+#
+# POR QUÉ NO USAMOS `exec`:
+# El runner refresca solo el token OAuth dentro de `.credentials`, así que
+# hay que copiarlo al volumen periódicamente y también cuando el container
+# para (SIGTERM). Con `exec` el shell desaparece y se pierde el trap, así que
+# corremos `run.sh` en background y le reenviamos las señales.
+# =============================================================================
+set -uo pipefail
 
-cd /home/runner
+WORK_DIR="${RUNNER_WORK_DIR:-/home/runner}"
+DATA_DIR="${RUNNER_DATA_DIR:-/runner-data}"
+# Cada cuánto copiar las credenciales al volumen (el runner refresca el token).
+PERSIST_INTERVAL="${RUNNER_CREDENTIALS_PERSIST_INTERVAL:-60}"
 
-# Solo configurar si hay token. Si no hay, asumimos que el container ya
-# fue configurado en otro momento (caso de volúmenes pre-poblados).
-if [[ -n "${RUNNER_TOKEN:-}" && ! -f .credentials ]]; then
-  echo "[entrypoint] Configuring runner (RUNNER_NAME=${RUNNER_NAME})..."
+cd "$WORK_DIR" || exit 1
 
-  config_args=(
+log() {
+  echo "[entrypoint] $*"
+}
+
+# Copia .runner/.credentials del work dir al volumen persistente.
+persist_credentials() {
+  local f
+  for f in .runner .credentials; do
+    if [[ -f "$WORK_DIR/$f" ]]; then
+      if ! cp -f "$WORK_DIR/$f" "$DATA_DIR/$f" 2>/dev/null; then
+        log "WARN: no se pudo persistir '$f' al volumen $DATA_DIR"
+      fi
+    fi
+  done
+}
+
+# Copia .runner/.credentials del volumen persistente al work dir.
+restore_credentials() {
+  local f
+  for f in .runner .credentials; do
+    if [[ -f "$DATA_DIR/$f" ]]; then
+      if ! cp -f "$DATA_DIR/$f" "$WORK_DIR/$f" 2>/dev/null; then
+        log "WARN: no se pudo restaurar '$f' del volumen $DATA_DIR"
+      fi
+    fi
+  done
+}
+
+configure_runner() {
+  local config_args=(
     --unattended
     --replace
     --name "${RUNNER_NAME:-$(hostname)}"
@@ -32,22 +70,65 @@ if [[ -n "${RUNNER_TOKEN:-}" && ! -f .credentials ]]; then
     --runnergroup "${RUNNER_GROUP:-Default}"
   )
 
-  # Repo o org: una de las dos envs tiene que estar seteada
+  # Repo u org: tiene que estar seteada una de las dos.
   if [[ -n "${RUNNER_REPO_URL:-}" ]]; then
     config_args+=(--url "${RUNNER_REPO_URL}" --token "${RUNNER_TOKEN}")
   elif [[ -n "${RUNNER_ORG_URL:-}" ]]; then
     config_args+=(--url "${RUNNER_ORG_URL}" --token "${RUNNER_TOKEN}")
   else
-    echo "[entrypoint] ERROR: neither RUNNER_REPO_URL nor RUNNER_ORG_URL is set" >&2
-    exit 1
+    log "ERROR: no está seteada RUNNER_REPO_URL ni RUNNER_ORG_URL"
+    return 1
   fi
 
-  ./config.sh "${config_args[@]}"
-  echo "[entrypoint] Runner configured OK"
-elif [[ -f .credentials ]]; then
-  echo "[entrypoint] .credentials ya existe en el volumen, skip configure"
+  log "Configurando runner (RUNNER_NAME=${RUNNER_NAME:-$(hostname)})..."
+  ./config.sh "${config_args[@]}" || return 1
+  log "Runner configurado OK"
+}
+
+# --- Startup ---------------------------------------------------------------
+
+if [[ -f "$DATA_DIR/.credentials" ]]; then
+  log "Credenciales restauradas del volumen $DATA_DIR"
+  restore_credentials
 else
-  echo "[entrypoint] WARN: RUNNER_TOKEN no provisto y no hay .credentials. El listener va a fallar."
+  if [[ -z "${RUNNER_TOKEN:-}" ]]; then
+    log "ERROR: no hay credenciales en el volumen ni RUNNER_TOKEN en el env"
+    exit 1
+  fi
+  configure_runner || exit 1
+  persist_credentials
 fi
 
-exec /home/runner/run.sh "$@"
+# El listener refresca el token OAuth dentro de `.credentials`. Sin esto, un
+# restart volvería a usar el token viejo del volumen.
+(
+  while true; do
+    sleep "$PERSIST_INTERVAL"
+    persist_credentials
+  done
+) &
+PERSIST_PID=$!
+
+# `run.sh` en background (no exec) para poder persistir al recibir SIGTERM.
+"$WORK_DIR/run.sh" "$@" &
+RUNNER_PID=$!
+
+shutdown() {
+  log "Señal de cierre recibida, persistiendo credenciales..."
+  persist_credentials
+  kill -TERM "$RUNNER_PID" 2>/dev/null || true
+}
+trap shutdown TERM INT
+
+STATUS=0
+wait "$RUNNER_PID" || STATUS=$?
+# Si una señal interrumpió el `wait`, el runner puede seguir vivo: esperamos.
+while kill -0 "$RUNNER_PID" 2>/dev/null; do
+  wait "$RUNNER_PID" || STATUS=$?
+done
+
+kill "$PERSIST_PID" 2>/dev/null || true
+persist_credentials
+
+log "El listener del runner terminó con código $STATUS"
+exit "$STATUS"

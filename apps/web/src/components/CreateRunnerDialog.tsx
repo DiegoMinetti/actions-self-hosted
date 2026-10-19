@@ -35,6 +35,14 @@ export function CreateRunnerDialog({
     queryFn: () => api.listPats(),
   });
 
+  // La imagen del runner la fija la app (RUNNER_VERSION). La leemos de la API
+  // para no mostrar un valor hardcodeado que se pueda quedar viejo.
+  const dockerQuery = useQuery({
+    queryKey: ['docker'],
+    queryFn: api.docker,
+  });
+  const runnerImage = dockerQuery.data?.runnerImage ?? 'actions-self-hosted-runner';
+
   // Auto-selecciona el PAT que matchee el target.
   // Si el target es "owner/repo" y hay un PAT con ownerLogin == owner, lo elige.
   // Si el target es "org" y hay un PAT con orgLogin == org, lo elige.
@@ -185,11 +193,11 @@ export function CreateRunnerDialog({
 
           <Field
             label="Imagen"
-            hint="Fija: actions-runner:2.336.0 (wrapper local con auto-configure)"
+            hint={`Fija: ${runnerImage} (wrapper sobre la imagen oficial de GitHub)`}
           >
             <input
               type="text"
-              value="actions-runner:2.336.0"
+              value={runnerImage}
               disabled
               className="w-full cursor-not-allowed rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-500"
             />
