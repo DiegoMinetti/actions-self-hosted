@@ -76,6 +76,28 @@ credenciales (`.runner` + `.credentials`, montados en `/runner-data`).
 > imagen 2.338.0, y "Recreate" no actualizaba el runner. El layout actual
 > separa la distribución (imagen) de las credenciales (volumen).
 
+### Migrar runners del layout viejo al nuevo
+
+Si venís de la versión anterior (volumen en `/home/runner`), el script
+`scripts/migrate-runner-volumes.sh` hace la migración:
+
+```bash
+cd ~/apps/actions-self-hosted
+./scripts/migrate-runner-volumes.sh          # migra, conserva los volúmenes viejos
+./scripts/migrate-runner-volumes.sh --purge  # además borra los volúmenes viejos
+```
+
+Por cada runner: crea el volumen `actions-runner-<name>-data`, copia
+`.runner` y `.credentials` del viejo, actualiza `volume_name` e `image` en la
+DB, y llama a `POST /api/runners/:id/recreate` para que el container se
+recree con la imagen nueva y el volumen nuevo.
+
+Necesita las credenciales del panel:
+
+```bash
+PANEL_USER=admin PANEL_PASSWORD='<el de tu .env>' ./scripts/migrate-runner-volumes.sh
+```
+
 ## Layout del container de un runner
 
 ```

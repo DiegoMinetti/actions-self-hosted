@@ -10,7 +10,7 @@ periódico del estado contra la API de GitHub.
 
 ## Stack
 
-- **Backend**: Node 24 + Express 4 + TypeScript + better-sqlite3 + dockerode
+- **Backend**: Node 24 + Express 4 + TypeScript + `node:sqlite` (built-in) + dockerode
 - **Frontend**: React 18 + Vite 5 + TanStack Query + Tailwind
 - **Shared**: tipos compartidos en `packages/shared` (pnpm workspace)
 - **DB**: SQLite local en `data/runners.db` (un solo archivo, cero infra)
