@@ -40,6 +40,8 @@ die()  { echo "ERROR: $*" >&2; exit 1; }
 
 log "Prerrequisitos"
 command -v docker >/dev/null 2>&1 || die "falta docker"
+command -v curl >/dev/null 2>&1 || die "falta curl"
+command -v jq >/dev/null 2>&1 || die "falta jq (sudo apt install jq)"
 docker compose version >/dev/null 2>&1 || die "falta docker compose"
 docker info >/dev/null 2>&1 || die "no se puede hablar con el daemon de Docker (¿sudo?)"
 echo "    docker: $(docker version --format '{{.Server.Version}}')  compose: $(docker compose version --short)"

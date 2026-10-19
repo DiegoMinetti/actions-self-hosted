@@ -140,6 +140,7 @@ while IFS= read -r runner; do
   name=$(echo "$runner" | jq -r '.name')
   id=$(echo "$runner" | jq -r '.id')
   old_vol=$(echo "$runner" | jq -r '.volumeName')
+  old_image=$(echo "$runner" | jq -r '.image')
   container=$(echo "$runner" | jq -r '.containerName')
   new_vol=$(volume_name_for "$name")
 
@@ -157,8 +158,16 @@ while IFS= read -r runner; do
   update_db "$id" "$new_vol" "$RUNNER_IMAGE"
 
   log "$name: recreando el container"
-  api_curl -X POST "$APP_URL/api/runners/$id/recreate" -H 'Content-Type: application/json' -d '{}' \
-    | jq -c '{name, status, containerState, image, volumeName, lastError}'
+  # Si el recreate falla, la DB quedaría apuntando al volumen nuevo mientras
+  # el container sigue usando el viejo. Revertimos la DB para que el runner
+  # quede consistente y operativo, y no lo migramos.
+  if ! api_curl -X POST "$APP_URL/api/runners/$id/recreate" -H 'Content-Type: application/json' -d '{}' \
+    | jq -c '{name, status, containerState, image, volumeName, lastError}'; then
+    warn "$name: el recreate falló, revirtiendo volume_name/image en la DB"
+    update_db "$id" "$old_vol" "$old_image"
+    $DOCKER_CMD volume rm "$new_vol" >/dev/null 2>&1 || true
+    die "la migración de $name falló y se revirtió. Revisar los logs de la app."
+  fi
 
   migrated+=("$name:$old_vol")
 done <<< "$runners"
