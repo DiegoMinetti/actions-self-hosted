@@ -131,7 +131,11 @@ db.close();
 
 runners=$(api_curl "$APP_URL/api/runners" | jq -c '.runners[]')
 expected_count=$(printf '%s\n' "$runners" | grep -c . || true)
-[[ "$expected_count" -gt 0 ]] || die "la API no devolvió runners"
+if [[ "$expected_count" -eq 0 ]]; then
+  # Instalación nueva: no hay nada que migrar. No es un error.
+  log "No hay runners registrados, no hay nada que migrar"
+  exit 0
+fi
 
 migrated=()
 skipped=()

@@ -42,6 +42,9 @@ services:
     image: actions-self-hosted-runner:${RUNNER_VERSION:-2.338.0}
     build:
       context: ./docker/runner
+      # OJO: el archivo se llama Dockerfile.runner, no Dockerfile. Sin esto
+      # compose busca `docker/runner/Dockerfile` y el build falla.
+      dockerfile: Dockerfile.runner
       args:
         RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
     # OJO: hay que sobreescribir el ENTRYPOINT, no el CMD. La imagen tiene

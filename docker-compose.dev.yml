@@ -14,6 +14,8 @@ services:
     image: actions-self-hosted-runner:${RUNNER_VERSION:-2.338.0}
     build:
       context: ./docker/runner
+      # El archivo se llama Dockerfile.runner, no Dockerfile.
+      dockerfile: Dockerfile.runner
       args:
         RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
     # Hay que sobreescribir el ENTRYPOINT (no el CMD): la imagen lo tiene, y
