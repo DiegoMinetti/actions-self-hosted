@@ -37,10 +37,28 @@ log() {
   echo "[entrypoint] $*"
 }
 
-# Copia .runner/.credentials del work dir al volumen persistente.
+# Archivos que el runner necesita conservar entre reinicios.
+#
+# NO son solo `.runner` y `.credentials`: el listener también necesita
+# `.credentials_rsaparams` (la clave RSA que firma las requests de OAuth; sin
+# ella el listener muere con "RSA key file ... was not found" y el runner
+# queda offline), y `.env` / `.path` (los lee el `env.sh` de la distribución
+# para armar el entorno del listener).
+#
+# OJO: el work dir es efímero (viene de la imagen), así que si alguno de
+# estos no se persiste, el runner no puede autenticarse al reiniciar.
+CREDENTIAL_FILES=(
+  .runner
+  .credentials
+  .credentials_rsaparams
+  .env
+  .path
+)
+
+# Copia los archivos de credenciales del work dir al volumen persistente.
 persist_credentials() {
   local f
-  for f in .runner .credentials; do
+  for f in "${CREDENTIAL_FILES[@]}"; do
     if [[ -f "$WORK_DIR/$f" ]]; then
       if ! cp -f "$WORK_DIR/$f" "$DATA_DIR/$f" 2>/dev/null; then
         log "WARN: no se pudo persistir '$f' al volumen $DATA_DIR"
@@ -49,10 +67,10 @@ persist_credentials() {
   done
 }
 
-# Copia .runner/.credentials del volumen persistente al work dir.
+# Copia los archivos de credenciales del volumen persistente al work dir.
 restore_credentials() {
   local f
-  for f in .runner .credentials; do
+  for f in "${CREDENTIAL_FILES[@]}"; do
     if [[ -f "$DATA_DIR/$f" ]]; then
       if ! cp -f "$DATA_DIR/$f" "$WORK_DIR/$f" 2>/dev/null; then
         log "WARN: no se pudo restaurar '$f' del volumen $DATA_DIR"
@@ -98,7 +116,6 @@ else
   configure_runner || exit 1
   persist_credentials
 fi
-
 # El listener refresca el token OAuth dentro de `.credentials`. Sin esto, un
 # restart volvería a usar el token viejo del volumen.
 (

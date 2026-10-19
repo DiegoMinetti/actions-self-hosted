@@ -113,7 +113,10 @@ copy_credentials() {
     --entrypoint /bin/sh \
     alpine:3.20 -c '
       set -e
-      for f in .runner .credentials; do
+      # El runner necesita estos 5 archivos para autenticarse al reiniciar.
+      # Omitir .credentials_rsaparams deja al listener sin la clave RSA y el
+      # runner queda offline.
+      for f in .runner .credentials .credentials_rsaparams .env .path; do
         if [ -f "/src/$f" ]; then cp -p "/src/$f" "/dst/$f"; fi
       done
       # el volumen nuevo no se siembra desde la imagen (ya tiene contenido),

@@ -489,7 +489,14 @@ async function wipeVolumeCredentials(volumeName: string): Promise<void> {
   await ensureImage(HELPER_IMAGE);
   const container = await docker.createContainer({
     Image: HELPER_IMAGE,
-    Cmd: ['sh', '-c', 'rm -f /runner-data/.runner /runner-data/.credentials && echo OK'],
+    // Los 5 archivos que el runner usa para autenticarse. Hay que borrar
+    // todos: si queda el .credentials_rsaparams viejo, el listener usa una
+    // clave RSA que ya no corresponde al registration nuevo.
+    Cmd: [
+      'sh',
+      '-c',
+      'rm -f /runner-data/.runner /runner-data/.credentials /runner-data/.credentials_rsaparams /runner-data/.env /runner-data/.path && echo OK',
+    ],
     HostConfig: {
       AutoRemove: true,
       Binds: [`${volumeName}:/runner-data`],
