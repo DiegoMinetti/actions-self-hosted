@@ -8,6 +8,17 @@
 # - Los hot-reloads funcionan via volúmenes de código fuente.
 
 services:
+  # La imagen del runner: mismo wrapper que en producción, para que el dev
+  # y la prod corran exactamente la misma imagen.
+  runner-image:
+    image: actions-self-hosted-runner:${RUNNER_VERSION:-2.338.0}
+    build:
+      context: ./docker/runner
+      args:
+        RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
+    command: ['true']
+    restart: 'no'
+
   api:
     build:
       context: .
@@ -18,6 +29,7 @@ services:
       API_PORT: 3000
       CORS_ORIGIN: http://localhost:5173
       DB_PATH: /app/data/runners.db
+      RUNNER_VERSION: ${RUNNER_VERSION:-2.338.0}
     ports:
       - '3000:3000'
     volumes:
