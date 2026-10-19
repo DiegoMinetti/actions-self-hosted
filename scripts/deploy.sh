@@ -45,11 +45,17 @@ docker info >/dev/null 2>&1 || die "no se puede hablar con el daemon de Docker (
 echo "    docker: $(docker version --format '{{.Server.Version}}')  compose: $(docker compose version --short)"
 
 [[ -f "$ENV_FILE" ]] || die "falta $ENV_FILE (copiá .env.example)"
-# shellcheck disable=SC1090
-set -a; . "$ENV_FILE"; set +a
+
+# Leer el .env SIN sourcearlo: un password con espacios, # o $ rompería el
+# shell. Con sed nos quedamos solo con el valor crudo.
+env_value() {
+  sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1 | sed -e 's/^["'\'']//' -e 's/["'\'']$//'
+}
+export PANEL_USER="$(env_value PANEL_USER)"
+export PANEL_PASSWORD="$(env_value PANEL_PASSWORD)"
 : "${PANEL_USER:?PANEL_USER no está en .env}"
 : "${PANEL_PASSWORD:?PANEL_PASSWORD no está en .env}"
-echo "    .env OK (RUNNER_VERSION=${RUNNER_VERSION:-sin definir})"
+echo "    .env OK (RUNNER_VERSION=$(env_value RUNNER_VERSION))"
 
 api_curl() {
   if [[ -n "${PANEL_PASSWORD:-}" ]]; then

@@ -95,6 +95,8 @@ uses_new_layout() {
 copy_credentials() {
   local old_vol="$1" new_vol="$2"
   $DOCKER_CMD volume create "$new_vol" >/dev/null
+  # alpine puede no estar en el daemon: `docker run` no hace pull automático.
+  $DOCKER_CMD pull alpine:3.20 >/dev/null 2>&1 || true
   $DOCKER_CMD run --rm \
     -v "$old_vol":/src:ro \
     -v "$new_vol":/dst \
@@ -112,11 +114,12 @@ copy_credentials() {
 }
 
 # Actualiza volume_name e image en la DB de la app.
+# Usa el DB_PATH del container (no hardcodeado) por si cambia.
 update_db() {
   local runner_id="$1" new_vol="$2" image="$3"
   $DOCKER_CMD exec "$APP_CONTAINER" node -e "
 const { DatabaseSync } = require('node:sqlite');
-const db = new DatabaseSync('/app/data/runners.db');
+const db = new DatabaseSync(process.env.DB_PATH || '/app/data/runners.db');
 const r = db.prepare('UPDATE runners SET volume_name = ?, image = ? WHERE id = ?')
   .run(process.argv[1], process.argv[2], process.argv[3]);
 console.log('  DB: ' + JSON.stringify(r));
