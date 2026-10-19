@@ -84,7 +84,8 @@ docker compose up -d --build
 
 **El tag ES la versión real.** El work dir del runner (`/home/runner`, con los
 binarios) vive en la imagen, y el volumen persistente solo guarda las
-credenciales (`.runner` + `.credentials`, montados en `/runner-data`).
+credenciales (5 archivos: `.runner`, `.credentials`, `.credentials_rsaparams`,
+`.env`, `.path` — montados en `/runner-data`).
 
 > Esto NO era así antes. Con el volumen montado en `/home/runner` (el layout
 > viejo), el volumen pisaba los binarios oficiales y el container quedaba
@@ -105,9 +106,10 @@ cd ~/apps/actions-self-hosted
 ```
 
 Por cada runner: crea el volumen `actions-runner-<name>-data`, copia
-`.runner` y `.credentials` del viejo, actualiza `volume_name` e `image` en la
-DB, y llama a `POST /api/runners/:id/recreate` para que el container se
-recree con la imagen nueva y el volumen nuevo.
+`.runner`, `.credentials`, `.credentials_rsaparams`, `.env` y `.path` del viejo,
+actualiza `volume_name` e `image` en la DB, y llama a
+`POST /api/runners/:id/recreate` para que el container se recree con la imagen
+nueva y el volumen nuevo.
 
 Necesita las credenciales del panel:
 
@@ -115,17 +117,54 @@ Necesita las credenciales del panel:
 PANEL_USER=admin PANEL_PASSWORD='<el de tu .env>' ./scripts/migrate-runner-volumes.sh
 ```
 
+> **OJO con el set de credenciales.** El runner NO se autentica solo con
+> `.runner` y `.credentials`: sin `.credentials_rsaparams` (la clave RSA que
+> firma las requests de OAuth) el listener muere con
+> `RSA key file /home/runner/.credentials_rsaparams was not found` y el runner
+> queda **offline para siempre** — el listener no puede autenticarse ni
+> re-registrarse solo. Si un runner queda offline después de migrar, la
+> solución es `POST /api/runners/:id/renew` (borra las credenciales y
+> re-registra), no reiniciar el container.
+
 ## Layout del container de un runner
 
 ```
 /home/runner     efímero — viene de la imagen oficial (bin/, externals/, run.sh)
-/runner-data     volumen nombrado — SOLO .runner y .credentials
+/runner-data     volumen nombrado — SOLO credenciales:
+                 .runner, .credentials, .credentials_rsaparams, .env, .path
 /var/run/docker.sock  socket del host — para que los jobs puedan buildear
 ```
+
+El work dir es efímero **a propósito**: la distribución oficial vive en la
+imagen, así que el tag de la imagen ES la versión real del runner. Si el
+volumen persistente estuviera montado en `/home/runner`, el volumen pisaría los
+binarios y quedaría congelado en la versión con la que se creó (bug real: un
+volumen con la 2.328.0 seguía sirviendo binarios de la 2.328.0 después de
+correr la imagen 2.338.0).
 
 El container corre como `1001:0` (uid del user `runner` de la imagen oficial +
 gid 0) y con `cap_drop: ALL` + las caps mínimas (`CHOWN`, `DAC_OVERRIDE`,
 `SETGID`, `SETUID`, `KILL`).
+
+## Reiniciar un runner: conflicto de sesión con GitHub
+
+Después de un `restart` (o un `renew`), el runner puede quedar unos minutos
+en `offline` aunque el container esté sano. Es el broker de GitHub: la sesión
+anterior del runner todavía está registrada y el listener nuevo choca con ella.
+
+```
+BrokerMessageListener] TaskAgentSessionConflictException: Error: Conflict
+BrokerMessageListener] The session for this runner already exists.
+BrokerMessageListener] Sleeping for 30 seconds before retrying.
+```
+
+El listener reintenta solo cada 30s y se recupera (~90s en la práctica) con
+`Runner reconnected`. **No hace falta re-registrar ni tocar el token**: es
+transitorio. Si el runner sigue `offline` después de un par de minutos, ahí sí
+mirar `docker logs <container>`.
+
+Un `renew` (que sí re-registra) no tiene este problema porque genera un
+registration nuevo.
 
 ## El socket Docker en GID 0 (Linux nativo)
 

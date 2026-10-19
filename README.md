@@ -95,7 +95,7 @@ panel en `http://localhost:3000` (o el `PANEL_PORT` que tengas en `.env`).
 │ actions-self-hosted- │   │ actions-self-hosted-runner │
 │ runner:<version>     │   │ (wrapper sobre la oficial) │
 │  /home/runner  efímero│  │  /runner-data  volumen     │
-│  /runner-data  volumen│  │   (.runner + .credentials) │
+│  /runner-data  volumen│  │   (5 archivos de credenciales) │
 └──────────────────────┘   └────────────────────────────┘
 ```
 
@@ -139,7 +139,7 @@ El layout actual separa las dos cosas:
 | Ruta           | Origen           | Contenido                                       |
 | -------------- | ---------------- | ----------------------------------------------- |
 | `/home/runner` | la imagen        | binarios, `externals/`, `run.sh` — efímero      |
-| `/runner-data` | volumen nombrado | solo `.runner` + `.credentials` — unos pocos KB |
+| `/runner-data` | volumen nombrado | solo credenciales (5 archivos) — unos pocos KB |
 
 Así **el tag de la imagen ES la versión real del runner**, y lo único que hay
 que preservar entre reinicios son las credenciales.
