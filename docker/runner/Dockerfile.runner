@@ -33,10 +33,14 @@
 # Con este diseño:
 #   - `/home/runner`  -> efímero, viene SIEMPRE de la imagen oficial.
 #                         El tag de la imagen ES la versión real del runner.
-#   - `/runner-data`  -> volumen persistente con SOLO `.runner` y
-#                         `.credentials` (unos pocos KB). Las credenciales
-#                         sobreviven a stop/start y recreate, que es lo único
-#                         que hay que preservar.
+#   - `/runner-data`  -> volumen persistente con SOLO credenciales (unos pocos
+#                         KB): `.runner`, `.credentials`, `.credentials_rsaparams`,
+#                         `.env` y `.path`. Sobreviven a stop/start y recreate,
+#                         que es lo único que hay que preservar.
+#
+#                         OJO con el set completo: sin `.credentials_rsaparams` el
+#                         listener muere con "RSA key file ... was not found" y
+#                         el runner queda offline para siempre.
 #
 # Build (normalmente lo hace compose, no hace falta a mano):
 #   docker compose build runner-image
